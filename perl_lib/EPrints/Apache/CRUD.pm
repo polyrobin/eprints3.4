@@ -1804,7 +1804,7 @@ sub POST
 	}
 	else
 	{
-		if (undefined $items[0]){
+		if (!defined $items[0]){
 			return  $self->sword_error(
 				status => HTTP_BAD_REQUEST,
 				summary => "Import plugin didn't create anything.  Check ".$repo->config( 'perl_url' )."/schema to ensure the metadata being sent is valid.",
