@@ -1,75 +1,115 @@
 #!/usr/bin/perl -w
-
+ 
 use FindBin;
 use lib "$FindBin::Bin/../perl_lib";
-
+ 
 ######################################################################
 #
 #
 ######################################################################
-
+ 
 =pod
-
+ 
 =for Pod2Wiki
-
+ 
 =head1 NAME
-
+ 
 B<generate_abstracts> - Regenerate all the static abstract pages for an EPrint repository
-
+ 
 =head1 SYNOPSIS
-
+ 
 B<generate_abstracts> I<repository_id> [B<options>] [I<eprint_id>, I<eprint_id>, I<eprint_id>-I<eprint_id> ...]
-
+ 
 =head1 DESCRIPTION
-
+ 
 This script recreates every static abstract page for an eprints repository. To save load on the database, as archived data should not change, EPrints creates static webpages containing the summary of each eprint. If you change the way the abstracts are rendered or change the site template then you will want to run this script.
-
+ 
 To only recreate static abstract pages for certain eprint IDs provide a space separated list of eprint ID integer values.  To recreate a tranche of consecutive eprint static abstract pages, use a hyphen between integer values, (e.g. 10-20).
-
+ 
 =head1 ARGUMENTS
-
+ 
 =over 8
-
+ 
 =item B<repository_id> 
-
+ 
 The ID of the eprint repository to use.
-
+ 
 =item B<eprint_id> 
-
+ 
 An optional integer indicating that the static abstract page for eprint record I<eprint_id> should be updated. Multiple I<eprint_id> integer values may be provided to regenerate a set of static abstract pages for the specified eprints.  To recreate a tranche of consecutive eprint static abstracts pages use a hyphen between integer values, (e.g. 10-20).
-
+ 
 =back
-
+ 
 =head1 OPTIONS
-
+ 
 =over 8
-
+ 
 =item B<--help>
-
+ 
 Print a brief help message and exit.
-
+ 
+=item B<--updated> I<date>
+ 
+Generate abstracts only for records modified since the supplied date.
+ 
+Supported formats:
+ 
+Relative dates:
+ 
+  yesterday
+  "1d ago"
+  "7 days ago"
+  "1 month ago"
+  "1 year ago"
+ 
+Short relative dates:
+ 
+  1d
+  7d
+  1m
+  6m
+  1y
+ 
+Absolute dates:
+ 
+  YYYY
+  YYYY-MM
+  YYYY-MM-DD
+ 
+Examples:
+ 
+  --updated 7d
+  --updated 1m
+  --updated 1y
+  --updated "30 days ago"
+  --updated 2026
+  --updated 2026-07
+  --updated 2026-07-23
+ 
+Expressions containing spaces must be quoted. A trailing '-' is allowed and ignored.
+ 
 =item B<--man>
-
+ 
 Print the full manual page and then exit.
-
+ 
 =item B<--quiet>
-
+ 
 Be vewwy vewwy quiet. This option will suppress all output unless an error occurs.
-
+ 
 =item B<--verbose>
-
+ 
 Explain in detail what is going on.
 May be repeated for greater effect.
-
+ 
 =item B<--version>
-
+ 
 Output version information and exit.
-
+ 
 =back   
-
-
+ 
+ 
 =cut
-
+ 
 
 use EPrints;
 
@@ -82,6 +122,7 @@ my $verbose = 0;
 my $quiet = 0;
 my $help = 0;
 my $man = 0;
+my $updated_opt = undef;
 
 Getopt::Long::Configure("permute");
 
@@ -91,8 +132,10 @@ GetOptions(
 	'version' => \$version,
 	'verbose+' => \$verbose,
 	'silent' => \$quiet,
-	'quiet' => \$quiet
+	'quiet' => \$quiet,
+	'updated=s' => \$updated_opt,
 ) || pod2usage( 2 );
+
 EPrints::Utils::cmd_version( "generate_abstracts" ) if $version;
 pod2usage( 1 ) if $help;
 pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
@@ -114,34 +157,63 @@ if( !defined $session )
 	exit 1;
 }
 
-if( defined $ARGV[0] )
+my $dataset = $session->dataset( "eprint" );
+
+# Add --updated filter if specified
+my $updated_value;
+
+if( defined $updated_opt )
 {
-	my @eprintids = expand_ids( $session, 'eprint', @ARGV );
-	foreach my $eprintid ( @eprintids )
+	$updated_value = normalise_updated_arg( $updated_opt );
+
+	if( defined $updated_value )
 	{
-		my $eprint = EPrints::DataObj::EPrint->new( $session, $eprintid );
-		if( !defined $eprint )
-		{
-			$session->get_repository->log( "EPrint #".$eprintid." not found. Can't write abstract." );
-		}
-		else
-		{
-			make_static( $session, $eprint->get_dataset, $eprint, {} );
-			print "Wrote abstract #$eprintid\n" if( $noise > 0);
-		}
+		print "Selecting eprints updated since $updated_value\n"
+			if( $noise > 0 );
 	}
 }
-else
+
+# Expand IDs and ranges into a complete list if specified
+my @all_eprintids = expand_ids( $session, $dataset, $updated_value, @ARGV );
+print scalar(@all_eprintids)." eprints found.\n"
+    if $noise > 0;
+
+if( $noise > 0 )
 {
-	print "Writing abstracts\n" if( $noise > 0);
-	my $dataset = $session->dataset( "eprint" );
-	my $info = { count=>0 };
-	$dataset->map( $session , \&make_static, $info );
-	if( $noise > 0)
+    if( scalar(@ARGV) == 0 && !defined($updated_value) )
+    {
+        print "Processing all eprints\n";
+    }
+    elsif( @all_eprintids )
+    {
+        print "Processing eprints: "
+            . compact_ids(@all_eprintids)
+            . "\n";
+    }
+}
+
+print "Writing abstracts\n" if ( $noise > 0);
+my $info = { count => 0 };
+
+foreach my $eprintid ( @all_eprintids )
+{
+	my $eprint = EPrints::DataObj::EPrint->new( $session, $eprintid );
+	if( !defined $eprint )
 	{
-		print "Done writing ".$info->{count}." abstracts\n";
+		$session->get_repository->log( "EPrint #" . $eprintid . " not found. Can't write abstract." );
+	}
+	else
+	{
+		make_static( $session, $dataset, $eprint, $info );
+		print "Wrote abstract #$eprintid\n" if( $noise > 0 );
 	}
 }
+
+if( $noise > 0 )
+{
+	print "Done writing " . $info->{count} . " abstracts\n";
+}
+
 $session->terminate();
 exit;
 
@@ -152,40 +224,155 @@ sub make_static
 	$eprint->generate_static();
 	if( $noise > 1 )
 	{
-		print "Generated ".$eprint->get_value( "eprintid" )."\n";
+		print "Generated " . $eprint->get_value( "eprintid" ) . "\n" if ( $noise > 0 );
 	}
 	$info->{count}++;
 }
 
 sub expand_ids
 {
-	my ( $repo, $datasetid, @ids ) = @_;
-	my $dataset = $repo->dataset( $datasetid );
+	my ( $repo, $dataset, $updated_value, @ids ) = @_;
 	my @all_ids = ();
 	foreach my $id ( @ids )
 	{
-		if( $id =~ m/^[0-9]+-[0-9]+$/ )
+		if( $id =~ m/^([0-9]+-[0-9]+|[0-9]+-?)$/ )
 		{
 			my $searchexp = new EPrints::Search(
+                satisfy_all => 1,
 				session=>$repo,
 				dataset=>$dataset );
+            if( defined $updated_value )
+            {
+                $searchexp->add_field(
+                    fields => [ $dataset->get_field("lastmod") ],
+                    value  => $updated_value
+                );
+            }
 			$searchexp->add_field( $dataset->key_field, $id );
 			my $list = $searchexp->perform_search;
 			push @all_ids, @{$list->ids};
 		}
-		else
-		{
-			push @all_ids, $id;
-		}
 	}
+    if (scalar @ids == 0)
+    {
+        if( defined $updated_value )
+        {
+            my $searchexp = new EPrints::Search(
+                    satisfy_all => 1,
+                    session=>$repo,
+                    dataset=>$dataset );
+            if( defined $updated_value )
+                {
+                    $searchexp->add_field(
+                        fields => [ $dataset->get_field("lastmod") ],
+                        value  => $updated_value
+                    );
+                }
+            my $list = $searchexp->perform_search;
+            push @all_ids, @{$list->ids};
+        }
+        else {
+            my $list = $dataset->search();
+            push @all_ids, @{$list->ids};
+        }
+    }
 	return @all_ids;
+}
+
+
+sub normalise_updated_arg
+{
+	my( $value ) = @_;
+
+	return undef unless defined $value;
+
+	$value =~ s/-$//;
+    $value =~ s/yesterday/1d ago/;
+
+    if( $value =~ /^([0-9]+)\s*([dmy])(?:ays?|onths?|ears?)?(?:\s+ago)?$/i )
+	{
+		my ($n, $unit) = ($1, lc $2);
+
+		my @lt = localtime;
+
+		if( $unit eq 'd' )
+		{
+			@lt = localtime( time - $n * 86400 );
+		}
+		elsif( $unit eq 'm' )
+		{
+			# approximation
+			@lt = localtime( time - $n * 30 * 86400 );
+		}
+		elsif( $unit eq 'y' )
+		{
+			# approximation
+			@lt = localtime( time - $n * 365 * 86400 );
+		}
+
+		return sprintf(
+			"%04d-%02d-%02d-",
+			$lt[5] + 1900,
+			$lt[4] + 1,
+			$lt[3]
+		);
+	}
+	elsif ( $value =~ /^[0-9]{4}$/ )
+	{
+		return "$value-";
+	}
+	elsif ( $value =~ /^[0-9]{4}-[0-9]{2}$/ )
+	{
+		return "$value-";
+	}
+	elsif ( $value =~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ )
+	{
+		return "$value-";
+	}
+
+	die "Invalid updated value: $value\n";
+}
+
+sub compact_ids
+{
+    my @ids = sort { $a <=> $b } @_;
+
+    return '' if !@ids;
+
+    my @ranges;
+
+    my $start = $ids[0];
+    my $prev  = $ids[0];
+
+    foreach my $id ( @ids[1..$#ids] )
+    {
+        if( $id == $prev + 1 )
+        {
+            $prev = $id;
+            next;
+        }
+
+        push @ranges,
+            $start == $prev
+                ? $start
+                : "$start-$prev";
+
+        $start = $prev = $id;
+    }
+
+    push @ranges,
+        $start == $prev
+            ? $start
+            : "$start-$prev";
+
+    return join( ',', @ranges );
 }
 
 =head1 COPYRIGHT
 
 =for COPYRIGHT BEGIN
 
-Copyright 2022 University of Southampton.
+Copyright 2026 University of Southampton.
 EPrints 3.4 is supplied by EPrints Services.
 
 http://www.eprints.org/eprints-3.4/
@@ -210,4 +397,3 @@ License along with EPrints 3.4.
 If not, see L<http://www.gnu.org/licenses/>.
 
 =for LICENSE END
-
