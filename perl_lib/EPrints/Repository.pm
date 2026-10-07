@@ -156,10 +156,32 @@ sub new
 
 	if( $self->{offline} )
 	{
-		# Set a script to use the default language unless it 
+		# Set a script to use the default language unless it
 		# overrides it
-		$self->change_lang( 
-			$self->get_conf( "defaultlanguage" ) );
+		#
+		# EPRINTS_TEST_LANGUAGE (opt-in, unset in normal/production use):
+		# lets offline scripts (chiefly tests/*.pl, which all build their
+		# repository through this same offline path whether via
+		# EPrints::Test or EPrints->repository() directly) run against a
+		# specific language instead of whatever a given repository's
+		# defaultlanguage happens to be. Needed because several stock
+		# tests hardcode English-language expectations (render_date
+		# output, session language id) that fail against e.g. Ecole,
+		# whose defaultlanguage is 'fr' — without this, those tests would
+		# either have to be forked to expect French (fragile: breaks for
+		# any other repository) or only ever be run against an
+		# English-default repository.
+		my $test_lang = $ENV{EPRINTS_TEST_LANGUAGE};
+		if( defined $test_lang && length $test_lang
+			&& grep { $_ eq $test_lang } @{ $self->get_conf( "languages" ) || [] } )
+		{
+			$self->change_lang( $test_lang );
+		}
+		else
+		{
+			$self->change_lang(
+				$self->get_conf( "defaultlanguage" ) );
+		}
 	}
 	else
 	{
@@ -3486,8 +3508,7 @@ sub render_row_with_help
 
 
 	my $context = $parts{context} ? $parts{context} : 'none';
-	my $class = $parts{class} ? $parts{class} . ' ' : '';
-	my $tr = $self->make_element( "div", class=>$class . "ep_table_row", "data-context"=>$context );
+	my $tr = $self->make_element( "div", class=>$parts{class} . " ep_table_row", "data-context"=>$context );
 
 	#
 	# COL 1
@@ -6021,7 +6042,8 @@ sub get_csrf_token
 	use Digest::MD5;
         my $ctx = Digest::MD5->new;
         my $timestamp = time();
-        $ctx->add( $timestamp, $self->current_user->get_id, $self->config( "csrf_token_salt" ) );
+        my $uid = defined $self->current_user ? $self->current_user->get_id : 0;
+        $ctx->add( $timestamp, $uid, $self->config( "csrf_token_salt" ) );
 	return $timestamp . ":" . $ctx->hexdigest;
 }
 
