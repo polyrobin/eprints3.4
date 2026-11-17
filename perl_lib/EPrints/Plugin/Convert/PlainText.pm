@@ -102,7 +102,9 @@ sub export
 		if( $doc->get_value( "mime_type" ) eq $mime )
 		{
 			$cmd_id = $EPrints::Plugin::Convert::PlainText::APPS{$mime};
-			( $file_extension ) = $main  =~ /(([^.\s]+)+)$/;
+			# Whatever follows the last "." of the main file name, used below as a
+			# literal string (\Q...\E): it may contain any character.
+			( $file_extension ) = $main =~ /\.([^.\/]+)$/;
 			last if $repository->can_execute( $cmd_id );
 			last if $cmd_id eq "_special";
 		}
@@ -119,7 +121,7 @@ sub export
 		my $filename = $file->get_value( "filename" );
 		my $tgt = $filename;
 		$i++;
-		next unless $tgt =~ s/\.$file_extension$/\.$i\.txt/;
+		next unless defined $file_extension && $tgt =~ s/\.\Q$file_extension\E$/\.$i\.txt/;
 		$tgt =~ s/^.*\///; # strip directories
 		my $outfile = "$dir/$tgt";
 		
