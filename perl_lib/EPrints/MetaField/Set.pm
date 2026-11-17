@@ -331,7 +331,7 @@ sub render_set_input
 				) );
 	                	$row->appendChild( $session->make_text( " ".$labels->{$opt} ));
         	        	$dd = $session->make_element( "dd", id=>$basename."_".$opt."_desc" );
-						my $label = $session->make_element( 'label', for => "${basename}_$opt" );
+						my $label = $dd->appendChild( $session->make_element( 'label', for => "${basename}_$opt" ) );
                 		my $phrasename = $self->{confid}."_optdetails_".$self->{name}."_".$opt;
                 		$label->appendChild( $session->html_phrase( $phrasename ));
 			}
